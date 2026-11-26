@@ -5,7 +5,7 @@
     <strong>Ponte TCP RAW (<code>127.0.0.1:9100</code>) → Bluetooth Low Energy (BLE) para imprimir na impressora térmica JK-402A no Windows usando o driver oficial.</strong>
   </p>
 
-  ![Version](https://img.shields.io/badge/Version-2026.11.25.2-blue)
+  [![Release](https://img.shields.io/github/v/release/yagoporto/JK402A-BLE-Bridge?label=Version&color=0078D6)](https://github.com/yagoporto/JK402A-BLE-Bridge/releases/latest)
   ![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)
   ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
   ![BLE](https://img.shields.io/badge/Bluetooth-BLE%20GATT-0082FC?logo=bluetooth&logoColor=white)
