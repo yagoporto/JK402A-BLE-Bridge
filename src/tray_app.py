@@ -16,6 +16,10 @@ from tkinter import messagebox, scrolledtext, ttk
 from PIL import Image, ImageDraw, ImageTk
 import pystray
 
+from bleak import BleakClient, BleakScanner
+
+from src import __version__
+from src.ble_utils import is_writable, resolve_write_characteristic
 from src.bridge import (
     LOGGER,
     PrintBridgeServer,
@@ -121,7 +125,7 @@ class BridgeRunner:
         self.config = config
         if self._server is not None:
             self._server.config = config
-            self._server.sender.config = config
+            self._server.sender.update_config(config)
             LOGGER.info(
                 "Configuração aplicada: chunk=%dB, delay=%.3fs, espera=%.1fs, response=%s, trim_bitmap=%s",
                 config.chunk_size,
@@ -203,9 +207,9 @@ class BridgeTrayApp:
                 pass
 
         self.root = tk.Tk()
-        self.root.title("JK-402A BLE Print Bridge")
-        self.root.geometry("680x580")
-        self.root.minsize(620, 520)
+        self.root.title(f"JK-402A BLE Print Bridge v{__version__}")
+        self.root.geometry("720x660")
+        self.root.minsize(640, 580)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self._apply_window_icon()
 
@@ -256,6 +260,33 @@ class BridgeTrayApp:
         ttk.Button(btn_box, text="Minimizar p/ Bandeja", command=self.hide_window).pack(
             side=tk.LEFT, padx=3
         )
+
+        # Descoberta de impressora BLE (MAC & UUID) direto na interface
+        ble_frame = ttk.LabelFrame(main, text="Impressora BLE (MAC & UUID de Escrita)", padding=10)
+        ble_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.mac_var = tk.StringVar(value=self.config.mac_address)
+        self.uuid_var = tk.StringVar(value=self.config.write_uuid)
+        self._mac_label_to_addr: dict[str, str] = {}
+
+        ble_grid = ttk.Frame(ble_frame)
+        ble_grid.pack(fill=tk.X)
+        ble_grid.columnconfigure(1, weight=1)
+
+        ttk.Label(ble_grid, text="Dispositivo / MAC:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.mac_combo = ttk.Combobox(ble_grid, textvariable=self.mac_var)
+        self.mac_combo.grid(row=0, column=1, sticky=tk.EW, padx=(8, 8), pady=3)
+        self.mac_combo.bind("<<ComboboxSelected>>", self._on_mac_selected)
+        self.btn_scan_ble = ttk.Button(ble_grid, text="Buscar BLE", command=self.on_scan_ble)
+        self.btn_scan_ble.grid(row=0, column=2, sticky=tk.E, pady=3)
+
+        ttk.Label(ble_grid, text="UUID de Escrita:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.uuid_combo = ttk.Combobox(ble_grid, textvariable=self.uuid_var)
+        self.uuid_combo.grid(row=1, column=1, sticky=tk.EW, padx=(8, 8), pady=3)
+        self.btn_scan_uuid = ttk.Button(
+            ble_grid, text="Listar UUIDs", command=self.on_discover_uuids
+        )
+        self.btn_scan_uuid.grid(row=1, column=2, sticky=tk.E, pady=3)
 
         cfg_frame = ttk.LabelFrame(main, text="Ajuste de Chunks & Velocidade BLE", padding=10)
         cfg_frame.pack(fill=tk.X, pady=(0, 10))
@@ -336,6 +367,13 @@ class BridgeTrayApp:
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
+        ttk.Label(
+            main,
+            text=f"JK-402A BLE Bridge • Versão {__version__}",
+            foreground="#6b7280",
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.E, pady=(4, 0))
+
     def _apply_preset(self, chunk: int, delay_ms: int, post_s: float, with_resp: bool) -> None:
         self.chunk_var.set(str(chunk))
         self.delay_ms_var.set(str(delay_ms))
@@ -344,12 +382,14 @@ class BridgeTrayApp:
         self.on_save_config()
 
     def _read_ui_config(self) -> BridgeConfig:
+        mac = self._extract_mac(self.mac_var.get())
+        write_uuid = self.uuid_var.get().strip()
         chunk = max(20, min(512, int(self.chunk_var.get().strip())))
         delay_ms = max(0, int(self.delay_ms_var.get().strip()))
         post_s = max(0.0, float(self.post_delay_var.get().strip().replace(",", ".")))
         return BridgeConfig(
-            mac_address=self.config.mac_address,
-            write_uuid=self.config.write_uuid,
+            mac_address=mac,
+            write_uuid=write_uuid,
             tcp_host=self.config.tcp_host,
             tcp_port=self.config.tcp_port,
             chunk_size=chunk,
@@ -361,6 +401,99 @@ class BridgeTrayApp:
             force_write_with_response=self.with_resp_var.get(),
             trim_bitmap_margins=self.trim_bitmap_var.get(),
         )
+
+    def _extract_mac(self, value: str) -> str:
+        text = value.strip()
+        if text in self._mac_label_to_addr:
+            return self._mac_label_to_addr[text]
+        if "(" in text and text.endswith(")"):
+            return text.rsplit("(", 1)[-1][:-1].strip()
+        return text
+
+    def _on_mac_selected(self, _event: tk.Event[tk.Misc]) -> None:
+        self.mac_var.set(self._extract_mac(self.mac_var.get()))
+
+    def on_scan_ble(self) -> None:
+        self.btn_scan_ble.configure(state=tk.DISABLED)
+        LOGGER.info("Buscando dispositivos BLE próximos (5s)...")
+
+        def worker() -> None:
+            try:
+                devices = asyncio.run(BleakScanner.discover(timeout=5.0))
+                labels: list[str] = []
+                mapping: dict[str, str] = {}
+                preferred_addr: str | None = None
+                for dev in devices:
+                    name = dev.name or "Sem nome"
+                    label = f"{name} ({dev.address})"
+                    labels.append(label)
+                    mapping[label] = dev.address
+                    if "jk-402" in name.lower() and preferred_addr is None:
+                        preferred_addr = dev.address
+
+                def apply_results() -> None:
+                    self._mac_label_to_addr = mapping
+                    self.mac_combo["values"] = labels
+                    if preferred_addr:
+                        self.mac_var.set(preferred_addr)
+                    LOGGER.info("Busca BLE concluída: %d dispositivo(s) encontrado(s).", len(labels))
+                    self.btn_scan_ble.configure(state=tk.NORMAL)
+
+                self.root.after(0, apply_results)
+            except Exception as exc:
+                def on_err() -> None:
+                    LOGGER.error("Erro ao buscar dispositivos BLE: %s", exc)
+                    self.btn_scan_ble.configure(state=tk.NORMAL)
+
+                self.root.after(0, on_err)
+
+        threading.Thread(target=worker, daemon=True, name="ble-scan-ui").start()
+
+    def on_discover_uuids(self) -> None:
+        mac = self._extract_mac(self.mac_var.get())
+        if not mac:
+            messagebox.showwarning("MAC inválido", "Informe ou busque um endereço MAC primeiro.")
+            return
+        self.btn_scan_uuid.configure(state=tk.DISABLED)
+        LOGGER.info("Conectando em %s para listar UUIDs graváveis...", mac)
+
+        def worker() -> None:
+            async def fetch() -> tuple[list[str], str]:
+                device = await BleakScanner.find_device_by_address(mac, timeout=8.0)
+                if device is None:
+                    raise ConnectionError(f"Dispositivo {mac} não encontrado.")
+                async with BleakClient(device, timeout=10.0) as client:
+                    writable = [
+                        char.uuid
+                        for service in client.services
+                        for char in service.characteristics
+                        if is_writable(char)
+                    ]
+                    recommended, _ = resolve_write_characteristic(client.services)
+                    return writable, recommended
+
+            try:
+                writable, recommended = asyncio.run(fetch())
+
+                def apply_uuids() -> None:
+                    self.uuid_combo["values"] = writable
+                    self.uuid_var.set(recommended)
+                    LOGGER.info(
+                        "UUIDs graváveis encontrados (%d). Selecionado: %s",
+                        len(writable),
+                        recommended,
+                    )
+                    self.btn_scan_uuid.configure(state=tk.NORMAL)
+
+                self.root.after(0, apply_uuids)
+            except Exception as exc:
+                def on_err() -> None:
+                    LOGGER.error("Erro ao listar UUIDs de %s: %s", mac, exc)
+                    self.btn_scan_uuid.configure(state=tk.NORMAL)
+
+                self.root.after(0, on_err)
+
+        threading.Thread(target=worker, daemon=True, name="ble-uuid-ui").start()
 
     def _auto_start_if_free(self) -> None:
         if is_port_listening(self.config.tcp_host, self.config.tcp_port):
@@ -457,7 +590,9 @@ class BridgeTrayApp:
             self._last_tray_active = active
             self.tray_icon.icon = create_tray_icon_image(active)
             self.tray_icon.title = (
-                "JK-402A Bridge: Ativo (127.0.0.1:9100)" if active else "JK-402A Bridge: Parado"
+                f"JK-402A Bridge v{__version__}: Ativo (127.0.0.1:9100)"
+                if active
+                else f"JK-402A Bridge v{__version__}: Parado"
             )
 
         self._update_startup_button()

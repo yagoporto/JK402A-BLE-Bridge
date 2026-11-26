@@ -18,6 +18,7 @@ import time
 
 from bleak import BleakClient, BleakScanner
 
+from src import __version__
 from src.ble_utils import (
     chunk_bytes,
     optimize_tspl_bitmap,
@@ -59,6 +60,12 @@ class BlePrinterSender:
         self.config = config
         # Cache do dispositivo BLE encontrado para pular o scan nas impressões seguintes
         self._cached_device = None
+
+    def update_config(self, config: BridgeConfig) -> None:
+        """Atualiza configuração em tempo real e limpa o cache se o MAC mudar."""
+        if config.mac_address.strip().lower() != self.config.mac_address.strip().lower():
+            self._cached_device = None
+        self.config = config
 
     async def _enable_companion_notifications(
         self, client: BleakClient, write_uuid: str
@@ -251,7 +258,8 @@ class PrintBridgeServer:
             self.handle_client, self.config.tcp_host, self.config.tcp_port
         )
         LOGGER.info(
-            "Bridge JK-402A ativo em %s:%d -> BLE %s (chunk=%dB)",
+            "Bridge JK-402A v%s ativo em %s:%d -> BLE %s (chunk=%dB)",
+            __version__,
             self.config.tcp_host,
             self.config.tcp_port,
             self.config.mac_address,
@@ -330,6 +338,9 @@ def parse_args(argv: list[str] | None = None) -> BridgeConfig:
         help="Recorta margens brancas (0xFF) no topo/rodapé de comandos BITMAP TSPL.",
     )
     parser.add_argument("--verbose", action="store_true", help="Ativa logs detalhados.")
+    parser.add_argument(
+        "--version", action="version", version=f"JK-402A BLE Bridge {__version__}"
+    )
     args = parser.parse_args(argv)
 
     setup_logging(verbose=args.verbose)

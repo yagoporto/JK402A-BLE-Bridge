@@ -3,7 +3,7 @@ Unicode True
 !include "LogicLib.nsh"
 
 !define APP_NAME "JK-402A BLE Bridge"
-!define APP_VERSION "1.0.0"
+!define APP_VERSION "2026.11.25.2"
 !define APP_PUBLISHER "JK-402A Bridge"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\JK402ABleBridge"
 

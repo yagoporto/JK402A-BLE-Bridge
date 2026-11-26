@@ -5,6 +5,7 @@
     <strong>Ponte TCP RAW (<code>127.0.0.1:9100</code>) → Bluetooth Low Energy (BLE) para imprimir na impressora térmica JK-402A no Windows usando o driver oficial.</strong>
   </p>
 
+  ![Version](https://img.shields.io/badge/Version-2026.11.25.2-blue)
   ![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)
   ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
   ![BLE](https://img.shields.io/badge/Bluetooth-BLE%20GATT-0082FC?logo=bluetooth&logoColor=white)
@@ -112,7 +113,13 @@ Com o **JK-402A BLE Bridge** rodando (ícone verde na bandeja):
 
 ## 4. Usando em Outra Impressora BLE (Descobrir MAC e UUID)
 
-Caso sua impressora tenha outro endereço MAC ou outra característica GATT:
+Você pode descobrir e selecionar o **MAC** e o **UUID de escrita** direto pela interface na bandeja (sem mexer em código):
+1. Abra o painel do **JK-402A BLE Bridge** no System Tray.
+2. Clique em **Buscar BLE** e selecione sua impressora na lista.
+3. Clique em **Listar UUIDs** para preencher as características graváveis e selecionar a recomendada automaticamente.
+4. Clique em **Salvar & Aplicar**.
+
+*(Se preferir pelo terminal, o script `scan_jk.py` continua disponível:)*
 
 1. Rode o scanner com a impressora ligada:
    ```powershell
